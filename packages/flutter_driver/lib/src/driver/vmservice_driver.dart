@@ -236,6 +236,9 @@ class VMServiceFlutterDriver extends FlutterDriver {
       throw DriverError('Flutter application health check failed.');
     }
 
+    // Wait for the first application frame.
+    await driver.waitForCondition(const FirstFrameRasterized());
+
     _log('Connected to Flutter application.');
     return driver;
   }
