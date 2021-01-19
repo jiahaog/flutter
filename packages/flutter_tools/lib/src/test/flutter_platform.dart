@@ -5,14 +5,11 @@
 // @dart = 2.8
 
 import 'dart:async';
-import 'dart:io' as io; // ignore: dart_io_import;
 
-import 'package:dds/dds.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:test_core/src/platform.dart'; // ignore: implementation_imports
-import 'package:vm_service/vm_service.dart' as vm_service;
 
 import '../base/common.dart';
 import '../base/file_system.dart';
@@ -24,9 +21,9 @@ import '../dart/language_version.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
 import '../test/test_wrapper.dart';
-import '../vmservice.dart';
 import 'test_compiler.dart';
 import 'test_config.dart';
+import 'test_device.dart';
 import 'watcher.dart';
 
 /// The address at which our WebSocket server resides and at which the sky_shell
@@ -225,8 +222,6 @@ autoUpdateGoldenFiles = $updateGoldens;
   return buffer.toString();
 }
 
-enum _TestHarnessStatus { testerCrashed, finished }
-
 typedef Finalizer = Future<void> Function();
 
 /// The flutter test platform used to integrate with package:test.
@@ -275,7 +270,7 @@ class FlutterPlatform extends PlatformPlugin {
   final BuildInfo buildInfo;
   final List<String> additionalArguments;
 
-  Directory fontsDirectory;
+  final FontConfigManager _fontConfigManager = FontConfigManager();
 
   /// The test compiler produces dill files for each test main.
   ///
@@ -321,6 +316,7 @@ class FlutterPlatform extends PlatformPlugin {
         throwToolExit('installHook() was called with a precompiled test entry-point, but then more than one test suite was run.');
       }
     }
+
     final int ourTestCount = _testCount;
     _testCount += 1;
     final StreamController<dynamic> localController = StreamController<dynamic>();
@@ -372,6 +368,27 @@ class FlutterPlatform extends PlatformPlugin {
 
   PackageConfig _packageConfig;
 
+  TestDevice _createTestDevice() {
+    return FlutterTesterTestDevice(
+      shellPath: shellPath,
+      enableObservatory: enableObservatory,
+      machine: machine,
+      startPaused: startPaused,
+      disableServiceAuthCodes: disableServiceAuthCodes,
+      disableDds: disableDds,
+      explicitObservatoryPort: explicitObservatoryPort,
+      host: host,
+      buildTestAssets: buildTestAssets,
+      flutterProject: flutterProject,
+      icudtlPath: icudtlPath,
+      nullAssertions: nullAssertions,
+      additionalArguments: additionalArguments,
+      buildInfo: buildInfo,
+      compileExpression: _compileExpressionService,
+      fontConfigManager: _fontConfigManager
+    );
+  }
+
   Future<_AsyncError> _startTest(
     String testPath,
     StreamChannel<dynamic> controller,
@@ -383,7 +400,6 @@ class FlutterPlatform extends PlatformPlugin {
     _AsyncError outOfBandError; // error that we couldn't send to the harness that we need to send via our future
 
     final List<Finalizer> finalizers = <Finalizer>[]; // Will be run in reverse order.
-    bool subprocessActive = false;
     bool controllerSinkClosed = false;
     try {
       // Callback can't throw since it's just setting a variable.
@@ -436,102 +452,35 @@ class FlutterPlatform extends PlatformPlugin {
         mainDart = await compiler.compile(globals.fs.file(mainDart).uri);
 
         if (mainDart == null) {
-          controller.sink.addError(_getErrorMessage('Compilation failed', testPath, shellPath));
+          controller.sink.addError('Compilation failed for testPath=$testPath');
           return null;
         }
       }
 
-      final Process process = await _startProcess(
-        shellPath,
-        mainDart,
-        packages: buildInfo.packagesPath,
-        enableObservatory: enableObservatory,
-        startPaused: startPaused,
-        disableServiceAuthCodes: disableServiceAuthCodes,
-        observatoryPort: disableDds ? explicitObservatoryPort : 0,
+      final TestDevice testDevice = _createTestDevice();
+      await testDevice.start(
+        compiledEntrypointPath: mainDart,
         serverPort: server.port,
-        additionalArguments: additionalArguments,
       );
-      subprocessActive = true;
       finalizers.add(() async {
-        if (subprocessActive) {
-          globals.printTrace('test $ourTestCount: ensuring end-of-process for shell');
-          process.kill(io.ProcessSignal.sigkill);
-          final int exitCode = await process.exitCode;
-          subprocessActive = false;
-          if (!controllerSinkClosed && exitCode != -9) {
-            // ProcessSignal.SIGKILL
-            // We expect SIGKILL (9) because we tried to terminate it.
-            // It's negative because signals are returned as negative exit codes.
-            final String message = _getErrorMessage(
-                _getExitCodeMessage(exitCode),
-                testPath,
-                shellPath);
-            controller.sink.addError(message);
-          }
-        }
+        globals.printTrace('test $ourTestCount: ensuring test device is terminated.');
+        await testDevice.kill();
       });
-
-      final Completer<Uri> gotProcessObservatoryUri = Completer<Uri>();
-      if (!enableObservatory) {
-        gotProcessObservatoryUri.complete();
-      }
-
-      // Pipe stdout and stderr from the subprocess to our printStatus console.
-      // We also keep track of what observatory port the engine used, if any.
-      final Uri ddsServiceUri = getDdsServiceUri();
-      _pipeStandardStreamsToConsole(
-        process,
-        reportObservatoryUri: (Uri detectedUri) async {
-          assert(!gotProcessObservatoryUri.isCompleted);
-          assert(explicitObservatoryPort == null ||
-              explicitObservatoryPort == detectedUri.port);
-
-          Uri forwardingUri;
-          if (!disableDds) {
-            final DartDevelopmentService dds = await DartDevelopmentService.startDartDevelopmentService(
-              detectedUri,
-              serviceUri: ddsServiceUri,
-              enableAuthCodes: !disableServiceAuthCodes,
-              ipv6: host.type == InternetAddressType.IPv6,
-            );
-            forwardingUri = dds.uri;
-            globals.printTrace('Dart Development Service started at ${dds.uri}, forwarding to VM service at ${dds.remoteVmServiceUri}.');
-          } else {
-            forwardingUri = detectedUri;
-          }
-          {
-            globals.printTrace('Connecting to service protocol: $forwardingUri');
-            final Future<vm_service.VmService> localVmService = connectToVmService(forwardingUri,
-              compileExpression: _compileExpressionService);
-            unawaited(localVmService.then((vm_service.VmService vmservice) {
-              globals.printTrace('Successfully connected to service protocol: $forwardingUri');
-            }));
-          }
-          if (startPaused && !machine) {
-            globals.printStatus('The test process has been started.');
-            globals.printStatus('You can now connect to it using observatory. To connect, load the following Web site in your browser:');
-            globals.printStatus('  $forwardingUri');
-            globals.printStatus('You should first set appropriate breakpoints, then resume the test in the debugger.');
-          }
-          gotProcessObservatoryUri.complete(forwardingUri);
-        },
-      );
 
       // At this point, three things can happen next:
       // The engine could crash, in which case process.exitCode will complete.
       // The engine could connect to us, in which case webSocket.future will complete.
       // The local test harness could get bored of us.
-      globals.printTrace('test $ourTestCount: awaiting connection to result for test process at pid ${process.pid}');
-      final _TestHarnessStatus testHarnessStatus = await Future.any<_TestHarnessStatus>(<Future<_TestHarnessStatus>>[
-        process.exitCode.then<_TestHarnessStatus>((int exitCode) => _TestHarnessStatus.testerCrashed),
-        gotProcessObservatoryUri.future.then<_TestHarnessStatus>((Uri processObservatoryUri) {
+      globals.printTrace('test $ourTestCount: awaiting connection to test device');
+      await Future.any<void>(<Future<void>>[
+        testDevice.finished,
+        testDevice.observatoryUri.then<void>((Uri processObservatoryUri) {
           if (processObservatoryUri != null) {
             globals.printTrace('test $ourTestCount: Observatory uri is available at $processObservatoryUri');
           }
-          watcher?.handleStartedProcess(ProcessEvent(ourTestCount, process, processObservatoryUri));
+          watcher?.handleStartedDevice(processObservatoryUri);
 
-          return webSocket.future.then<_TestHarnessStatus>((WebSocket remoteSocket) async {
+          return webSocket.future.then<void>((WebSocket remoteSocket) async {
             globals.printTrace('test $ourTestCount: connected to test harness, now awaiting test result');
             await _controlTests(
               controller: controller,
@@ -548,34 +497,22 @@ class FlutterPlatform extends PlatformPlugin {
               }
             );
 
-            await watcher?.handleFinishedTest(ProcessEvent(ourTestCount, process, processObservatoryUri));
-            return _TestHarnessStatus.finished;
+            await watcher?.handleFinishedTest(testDevice);
           });
         })
       ]);
-
-      if (testHarnessStatus == _TestHarnessStatus.testerCrashed) {
-        globals.printTrace('test $ourTestCount: process with pid ${process.pid} crashed');
-        final int exitCode = await process.exitCode;
-        subprocessActive = false;
-        final String message = _getErrorMessage(
-            _getExitCodeMessage(exitCode),
-            testPath,
-            shellPath);
-        controller.sink.addError(message);
-        // Awaited for with 'sink.done' below in `finally`.
-        unawaited(controller.sink.close());
-        globals.printTrace('test $ourTestCount: waiting for controller sink to close');
-        await controller.sink.done;
-        await watcher?.handleTestCrashed(ProcessEvent(ourTestCount, process));
-      }
     } on Exception catch (error, stack) {
+      Object reportedError = error;
+      if (error is TestDeviceException) {
+        reportedError = error.message;
+      }
+
       globals.printTrace('test $ourTestCount: error caught during test; ${controllerSinkClosed ? "reporting to console" : "sending to test framework"}');
       if (!controllerSinkClosed) {
-        controller.sink.addError(error, stack);
+        controller.sink.addError(reportedError, stack);
       } else {
-        globals.printError('unhandled error during test:\n$testPath\n$error\n$stack');
-        outOfBandError ??= _AsyncError(error, stack);
+        globals.printError('unhandled error during test:\n$testPath\n$reportedError\n$stack');
+        outOfBandError ??= _AsyncError(reportedError, stack);
       }
     } finally {
       globals.printTrace('test $ourTestCount: cleaning up...');
@@ -600,7 +537,6 @@ class FlutterPlatform extends PlatformPlugin {
         await controller.sink.done;
       }
     }
-    assert(!subprocessActive);
     assert(controllerSinkClosed);
     if (outOfBandError != null) {
       globals.printTrace('test $ourTestCount: finished with out-of-band failure');
@@ -651,186 +587,13 @@ class FlutterPlatform extends PlatformPlugin {
     );
   }
 
-  File _cachedFontConfig;
-
   @override
   Future<dynamic> close() async {
     if (compiler != null) {
       await compiler.dispose();
       compiler = null;
     }
-    if (fontsDirectory != null) {
-      globals.printTrace('Deleting ${fontsDirectory.path}...');
-      fontsDirectory.deleteSync(recursive: true);
-      fontsDirectory = null;
-    }
-  }
-
-  /// Returns a Fontconfig config file that limits font fallback to the
-  /// artifact cache directory.
-  File get _fontConfigFile {
-    if (_cachedFontConfig != null) {
-      return _cachedFontConfig;
-    }
-
-    final StringBuffer sb = StringBuffer();
-    sb.writeln('<fontconfig>');
-    sb.writeln('  <dir>${globals.cache.getCacheArtifacts().path}</dir>');
-    sb.writeln('  <cachedir>/var/cache/fontconfig</cachedir>');
-    sb.writeln('</fontconfig>');
-
-    if (fontsDirectory == null) {
-      fontsDirectory = globals.fs.systemTempDirectory.createTempSync('flutter_test_fonts.');
-      globals.printTrace('Using this directory for fonts configuration: ${fontsDirectory.path}');
-    }
-
-    _cachedFontConfig = globals.fs.file('${fontsDirectory.path}/fonts.conf');
-    _cachedFontConfig.createSync();
-    _cachedFontConfig.writeAsStringSync(sb.toString());
-    return _cachedFontConfig;
-  }
-
-  Future<Process> _startProcess(
-    String executable,
-    String testPath, {
-    String packages,
-    bool enableObservatory = false,
-    bool startPaused = false,
-    bool disableServiceAuthCodes = false,
-    int observatoryPort,
-    int serverPort,
-    List<String> additionalArguments,
-  }) {
-    assert(executable != null); // Please provide the path to the shell in the SKY_SHELL environment variable.
-    assert(!startPaused || enableObservatory);
-    final List<String> command = <String>[
-      executable,
-      if (enableObservatory) ...<String>[
-        // Some systems drive the _FlutterPlatform class in an unusual way, where
-        // only one test file is processed at a time, and the operating
-        // environment hands out specific ports ahead of time in a cooperative
-        // manner, where we're only allowed to open ports that were given to us in
-        // advance like this. For those esoteric systems, we have this feature
-        // whereby you can create _FlutterPlatform with a pair of ports.
-        //
-        // I mention this only so that you won't be tempted, as I was, to apply
-        // the obvious simplification to this code and remove this entire feature.
-        if (observatoryPort != null) '--observatory-port=$observatoryPort',
-        if (startPaused) '--start-paused',
-        if (disableServiceAuthCodes) '--disable-service-auth-codes',
-      ]
-      else
-        '--disable-observatory',
-      if (host.type == InternetAddressType.IPv6) '--ipv6',
-      if (icudtlPath != null) '--icu-data-file-path=$icudtlPath',
-      '--enable-checked-mode',
-      '--verify-entry-points',
-      '--enable-software-rendering',
-      '--skia-deterministic-rendering',
-      '--enable-dart-profiling',
-      '--non-interactive',
-      '--use-test-fonts',
-      '--packages=$packages',
-      if (nullAssertions)
-        '--dart-flags=--null_assertions',
-      ...?additionalArguments,
-      testPath,
-    ];
-
-    globals.printTrace(command.join(' '));
-    // If the FLUTTER_TEST environment variable has been set, then pass it on
-    // for package:flutter_test to handle the value.
-    //
-    // If FLUTTER_TEST has not been set, assume from this context that this
-    // call was invoked by the command 'flutter test'.
-    final String flutterTest = globals.platform.environment.containsKey('FLUTTER_TEST')
-        ? globals.platform.environment['FLUTTER_TEST']
-        : 'true';
-    final Map<String, String> environment = <String, String>{
-      'FLUTTER_TEST': flutterTest,
-      'FONTCONFIG_FILE': _fontConfigFile.path,
-      'SERVER_PORT': serverPort.toString(),
-      'APP_NAME': flutterProject?.manifest?.appName ?? '',
-      if (buildTestAssets)
-        'UNIT_TEST_ASSETS': globals.fs.path.join(flutterProject?.directory?.path ?? '', 'build', 'unit_test_assets'),
-    };
-    return globals.processManager.start(command, environment: environment);
-  }
-
-  void _pipeStandardStreamsToConsole(
-    Process process, {
-    Future<void> reportObservatoryUri(Uri uri),
-  }) {
-
-    const String observatoryString = 'Observatory listening on ';
-    for (final Stream<List<int>> stream in <Stream<List<int>>>[
-      process.stderr,
-      process.stdout,
-    ]) {
-      stream
-          .transform<String>(utf8.decoder)
-          .transform<String>(const LineSplitter())
-          .listen(
-        (String line) async {
-          if (line.startsWith("error: Unable to read Dart source 'package:test/")) {
-            globals.printTrace('Shell: $line');
-            globals.printError('\n\nFailed to load test harness. Are you missing a dependency on flutter_test?\n');
-          } else if (line.startsWith(observatoryString)) {
-            globals.printTrace('Shell: $line');
-            try {
-              final Uri uri = Uri.parse(line.substring(observatoryString.length));
-              if (reportObservatoryUri != null) {
-                await reportObservatoryUri(uri);
-              }
-            } on Exception catch (error) {
-              globals.printError('Could not parse shell observatory port message: $error');
-            }
-          } else if (line != null) {
-            globals.printStatus('Shell: $line');
-          }
-        },
-        onError: (dynamic error) {
-          globals. printError('shell console stream for process pid ${process.pid} experienced an unexpected error: $error');
-        },
-        cancelOnError: true,
-      );
-    }
-  }
-
-  String _getErrorMessage(String what, String testPath, String shellPath) {
-    return '$what\nTest: $testPath\nShell: $shellPath\n\n';
-  }
-
-  String _getExitCodeMessage(int exitCode) {
-    switch (exitCode) {
-      case 1:
-        return 'Shell subprocess cleanly reported an error. Check the logs above for an error message.';
-      case 0:
-        return 'Shell subprocess ended cleanly. Did main() call exit()?';
-      case -0x0f: // ProcessSignal.SIGTERM
-        return 'Shell subprocess crashed with SIGTERM ($exitCode).';
-      case -0x0b: // ProcessSignal.SIGSEGV
-        return 'Shell subprocess crashed with segmentation fault.';
-      case -0x06: // ProcessSignal.SIGABRT
-        return 'Shell subprocess crashed with SIGABRT ($exitCode).';
-      case -0x02: // ProcessSignal.SIGINT
-        return 'Shell subprocess terminated by ^C (SIGINT, $exitCode).';
-      default:
-        return 'Shell subprocess crashed with unexpected exit code $exitCode.';
-    }
-  }
-
-  @visibleForTesting
-  @protected
-  Uri getDdsServiceUri() {
-    return Uri(
-      scheme: 'http',
-      host: (host.type == InternetAddressType.IPv6 ?
-        InternetAddress.loopbackIPv6 :
-        InternetAddress.loopbackIPv4
-      ).host,
-      port: explicitObservatoryPort ?? 0,
-    );
+    await _fontConfigManager.dispose();
   }
 }
 

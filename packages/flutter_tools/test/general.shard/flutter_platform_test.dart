@@ -38,6 +38,7 @@ void main() {
         buildInfo: BuildInfo.debug,
         shellPath: '/',
         explicitObservatoryPort: 1234,
+        enableObservatory: false,
       );
       flutterPlatform.loadChannel('test1.dart', MockSuitePlatform());
 
@@ -53,6 +54,7 @@ void main() {
         buildInfo: BuildInfo.debug,
         shellPath: '/',
         precompiledDillPath: 'example.dill',
+        enableObservatory: false,
       );
       flutterPlatform.loadChannel('test1.dart', MockSuitePlatform());
 
@@ -60,49 +62,6 @@ void main() {
     }, overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
-    });
-
-    group('Observatory and DDS setup', () {
-      Platform fakePlatform;
-      ProcessManager fakeProcessManager;
-      FlutterPlatform flutterPlatform;
-      final Map<Type, Generator> contextOverrides = <Type, Generator>{
-        Platform: () => fakePlatform,
-        ProcessManager: () => fakeProcessManager,
-        FileSystem: () => fileSystem,
-      };
-
-      setUp(() {
-        fakePlatform = FakePlatform(operatingSystem: 'linux', environment: <String, String>{});
-        fakeProcessManager = FakeProcessManager.list(<FakeCommand>[
-          const FakeCommand(
-            command: <String>[
-              '/',
-              '--observatory-port=0',
-              '--ipv6',
-              '--enable-checked-mode',
-              '--verify-entry-points',
-              '--enable-software-rendering',
-              '--skia-deterministic-rendering',
-              '--enable-dart-profiling',
-              '--non-interactive',
-              '--use-test-fonts',
-              '--packages=.dart_tool/package_config.json',
-              'example.dill'
-            ],
-            stdout: 'success',
-            stderr: 'failure',
-            exitCode: 0,
-          )
-        ]);
-        flutterPlatform = TestObservatoryFlutterPlatform();
-      });
-
-      testUsingContext('skips setting observatory port and uses the input port for for DDS instead', () async {
-        flutterPlatform.loadChannel('test1.dart', MockSuitePlatform());
-        final TestObservatoryFlutterPlatform testPlatform = flutterPlatform as TestObservatoryFlutterPlatform;
-        await testPlatform.ddsServiceUriFuture().then((Uri uri) => expect(uri.port, 1234));
-      }, overrides: contextOverrides);
     });
 
     group('The FLUTTER_TEST environment variable is passed to the test process', () {
@@ -317,20 +276,7 @@ class TestObservatoryFlutterPlatform extends FlutterPlatform {
     additionalArguments: null,
   );
 
-  final Completer<Uri> _ddsServiceUriCompleter = Completer<Uri>();
-
-  Future<Uri> ddsServiceUriFuture() {
-    return _ddsServiceUriCompleter.future;
-  }
-
   @override
   @protected
   Future<HttpServer> bind(InternetAddress host, int port) async => MockHttpServer();
-
-  @override
-  Uri getDdsServiceUri() {
-    final Uri result = super.getDdsServiceUri();
-    _ddsServiceUriCompleter.complete(result);
-    return result;
-  }
 }
