@@ -17,8 +17,8 @@ import '../base/io.dart';
 import '../build_info.dart';
 import '../compile.dart';
 import '../convert.dart';
-import '../device.dart';
 import '../dart/language_version.dart';
+import '../device.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
 import '../test/test_wrapper.dart';
@@ -446,33 +446,20 @@ class FlutterPlatform extends PlatformPlugin {
 
       globals.printTrace('test $ourTestCount: starting shell process');
 
-      // TODO clean up this section.
-
-      // If a kernel file is given, then use that to launch the test.
-      // If mapping is provided, look kernel file from mapping.
-      // If all fails, create a "listener" dart that invokes actual test.
-      String mainDart;
+      String entrypointPath = testPath;
+      String compiledEntrypointPath;
       if (precompiledDillPath != null) {
-        mainDart = precompiledDillPath;
+        compiledEntrypointPath = precompiledDillPath;
       } else if (precompiledDillFiles != null) {
-        mainDart = precompiledDillFiles[testPath];
-      }
-      mainDart ??= _createListenerDart(finalizers, ourTestCount, testPath, server);
-
-      if (integrationTestDevice == null && (precompiledDillPath == null && precompiledDillFiles == null)) {
-        // Lazily instantiate compiler so it is built only if it is actually used.
-        compiler ??= TestCompiler(debuggingOptions.buildInfo, flutterProject);
-        mainDart = await compiler.compile(globals.fs.file(mainDart).uri);
-
-        if (mainDart == null) {
-          controller.sink.addError('Compilation failed for testPath=$testPath');
-          return null;
-        }
+        compiledEntrypointPath = precompiledDillFiles[testPath];
+      } else {
+        entrypointPath = _createListenerDart(finalizers, ourTestCount, testPath, server);
       }
 
       final TestDevice testDevice = _createTestDevice();
       await testDevice.start(
-        compiledEntrypointPath: mainDart,
+        entrypointPath: entrypointPath,
+        compiledEntrypointPath: compiledEntrypointPath,
         serverPort: server.port,
       );
       finalizers.add(() async {
@@ -520,7 +507,7 @@ class FlutterPlatform extends PlatformPlugin {
         reportedError = error.message;
       }
 
-      globals.printTrace('test $ourTestCount: error caught during test; ${controllerSinkClosed ? "reporting to console" : "sending to test framework"}');
+      globals.printTrace('test $ourTestCount: error caught testing $testPath; ${controllerSinkClosed ? "reporting to console" : "sending to test framework"}');
       if (!controllerSinkClosed) {
         controller.sink.addError(reportedError, stack);
       } else {

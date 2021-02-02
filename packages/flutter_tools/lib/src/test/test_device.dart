@@ -22,14 +22,22 @@ import '../device.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
 import '../vmservice.dart';
+import 'test_compiler.dart';
 
 /// A remote device where tests can be executed on.
 abstract class TestDevice {
   /// Starts the test device with the provided entrypoint.
   ///
+  /// A [compiledEntrypointPath] can also be passed. Some platforms, when passed
+  /// this, will skip compiling [entrypointPath], and use the former instead.
+  ///
   /// [serverPort] will indicate the port on the localhost to establish a
   /// websocket connection for tests to be controlled.
-  Future<void> start({@required String compiledEntrypointPath, @required int serverPort});
+  Future<void> start({
+    @required String entrypointPath,
+    String compiledEntrypointPath,
+    @required int serverPort,
+  });
 
   /// Should complete with null if the observatory is not enabled.
   Future<Uri> get observatoryUri;
@@ -69,7 +77,16 @@ class IntegrationTestTestDevice implements TestDevice {
   Uri _observatoryUri;
 
   @override
-  Future<void> start({@required String compiledEntrypointPath, @required int serverPort}) async {
+  Future<void> start({
+    @required String entrypointPath,
+    String compiledEntrypointPath,
+    @required int serverPort,
+  }) async {
+    assert(
+      compiledEntrypointPath == null,
+      'Passing a compiled entrypoint to an IntegrationTestTestDevice is not supported.',
+    );
+
     final TargetPlatform targetPlatform = await device.targetPlatform;
     _applicationPackage = await ApplicationPackageFactory.instance.getPackageForPlatform(
       targetPlatform,
@@ -93,7 +110,7 @@ class IntegrationTestTestDevice implements TestDevice {
 
     final LaunchResult launchResult = await device.startApp(
       _applicationPackage,
-      mainPath: compiledEntrypointPath,
+      mainPath: entrypointPath,
       platformArgs: <String, Object>{
         'SERVER_PORT': serverPort,
       },
@@ -174,11 +191,37 @@ class FlutterTesterTestDevice extends TestDevice {
 
   Process _process;
   Completer<Uri> _gotProcessObservatoryUri;
+  // TODO is a global the best way to do this?
+  /// The test compiler produces dill files for each test main.
+  ///
+  /// To speed up compilation, each compile is initialized from an existing
+  /// dill file from previous runs, if possible.
+  static TestCompiler compiler;
 
   @override
-  Future<void> start({@required String compiledEntrypointPath, @required int serverPort}) async {
+  Future<void> start({
+    @required String entrypointPath,
+    String compiledEntrypointPath,
+    @required int serverPort,
+  }) async {
     assert(_process == null);
     assert(_gotProcessObservatoryUri == null);
+
+    // If a kernel file is given, then use that to launch the test.
+    // If mapping is provided, look kernel file from mapping.
+    // If all fails, create a "listener" dart that invokes actual test.
+    String mainDart = entrypointPath;
+    if (compiledEntrypointPath != null) {
+      mainDart = compiledEntrypointPath;
+    } else {
+      // Lazily instantiate compiler so it is built only if it is actually used.
+      compiler ??= TestCompiler(debuggingOptions.buildInfo, flutterProject);
+      mainDart = await compiler.compile(globals.fs.file(mainDart).uri);
+
+      if (mainDart == null) {
+        throw TestDeviceException('Compilation failed');
+      }
+    }
 
     final List<String> command = <String>[
       shellPath,
@@ -211,7 +254,7 @@ class FlutterTesterTestDevice extends TestDevice {
       if (debuggingOptions.nullAssertions)
         '--dart-flags=--null_assertions',
       ...?additionalArguments,
-      compiledEntrypointPath,
+      mainDart,
     ];
     globals.printTrace(command.join(' '));
     // If the FLUTTER_TEST environment variable has been set, then pass it on
