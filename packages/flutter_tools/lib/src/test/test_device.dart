@@ -58,12 +58,10 @@ class TestDeviceException implements Exception {
 class IntegrationTestTestDevice implements TestDevice {
   IntegrationTestTestDevice({
     @required this.device,
-    @required this.buildInfo,
     @required this.debuggingOptions,
   });
 
   final Device device;
-  final BuildInfo buildInfo;
   final DebuggingOptions debuggingOptions;
 
   ApplicationPackage _applicationPackage;
@@ -75,7 +73,7 @@ class IntegrationTestTestDevice implements TestDevice {
     final TargetPlatform targetPlatform = await device.targetPlatform;
     _applicationPackage = await ApplicationPackageFactory.instance.getPackageForPlatform(
       targetPlatform,
-      buildInfo: buildInfo,
+      buildInfo: debuggingOptions.buildInfo,
     );
 
     // Hack.
@@ -149,38 +147,30 @@ class FlutterTesterTestDevice extends TestDevice {
     @required this.shellPath,
     @required this.enableObservatory,
     @required this.machine,
-    @required this.startPaused,
-    @required this.disableServiceAuthCodes,
-    @required this.disableDds,
     @required this.explicitObservatoryPort,
     @required this.host,
     @required this.buildTestAssets,
     @required this.flutterProject,
     @required this.icudtlPath,
-    @required this.nullAssertions,
     @required this.additionalArguments,
-    @required this.buildInfo,
     @required this.compileExpression,
     @required this.fontConfigManager,
+    @required this.debuggingOptions,
   })  : assert(shellPath != null), // Please provide the path to the shell in the SKY_SHELL environment variable.
-        assert(!startPaused || enableObservatory);
+        assert(!debuggingOptions.startPaused || enableObservatory);
 
   final String shellPath;
   final bool enableObservatory;
   final bool machine;
-  final bool startPaused;
-  final bool disableServiceAuthCodes;
-  final bool disableDds;
   final int explicitObservatoryPort;
   final InternetAddress host;
   final bool buildTestAssets;
   final FlutterProject flutterProject;
   final String icudtlPath;
-  final bool nullAssertions;
-  final BuildInfo buildInfo;
   final List<String> additionalArguments;
   final CompileExpression compileExpression;
   final FontConfigManager fontConfigManager;
+  final DebuggingOptions debuggingOptions;
 
   Process _process;
   Completer<Uri> _gotProcessObservatoryUri;
@@ -202,9 +192,9 @@ class FlutterTesterTestDevice extends TestDevice {
         //
         // I mention this only so that you won't be tempted, as I was, to apply
         // the obvious simplification to this code and remove this entire feature.
-        '--observatory-port=${disableDds ? explicitObservatoryPort : 0}',
-        if (startPaused) '--start-paused',
-        if (disableServiceAuthCodes) '--disable-service-auth-codes',
+        '--observatory-port=${debuggingOptions.disableDds ? explicitObservatoryPort : 0}',
+        if (debuggingOptions.startPaused) '--start-paused',
+        if (debuggingOptions.disableServiceAuthCodes) '--disable-service-auth-codes',
       ]
       else
         '--disable-observatory',
@@ -217,8 +207,8 @@ class FlutterTesterTestDevice extends TestDevice {
       '--enable-dart-profiling',
       '--non-interactive',
       '--use-test-fonts',
-      '--packages=${buildInfo.packagesPath}',
-      if (nullAssertions)
+      '--packages=${debuggingOptions.buildInfo.packagesPath}',
+      if (debuggingOptions.nullAssertions)
         '--dart-flags=--null_assertions',
       ...?additionalArguments,
       compiledEntrypointPath,
@@ -259,7 +249,7 @@ class FlutterTesterTestDevice extends TestDevice {
             explicitObservatoryPort == detectedUri.port);
 
         Uri forwardingUri;
-        if (!disableDds) {
+        if (!debuggingOptions.disableDds) {
           final DartDevelopmentService dds = await startDds(detectedUri);
           forwardingUri = dds.uri;
           globals.printTrace('Dart Development Service started at ${dds.uri}, forwarding to VM service at ${dds.remoteVmServiceUri}.');
@@ -276,7 +266,7 @@ class FlutterTesterTestDevice extends TestDevice {
             globals.printTrace('Successfully connected to service protocol: $forwardingUri');
           }));
         }
-        if (startPaused && !machine) {
+        if (debuggingOptions.startPaused && !machine) {
           globals.printStatus('The test process has been started.');
           globals.printStatus('You can now connect to it using observatory. To connect, load the following Web site in your browser:');
           globals.printStatus('  $forwardingUri');
@@ -337,7 +327,7 @@ class FlutterTesterTestDevice extends TestDevice {
     return DartDevelopmentService.startDartDevelopmentService(
       uri,
       serviceUri: _ddsServiceUri,
-      enableAuthCodes: !disableServiceAuthCodes,
+      enableAuthCodes: !debuggingOptions.disableServiceAuthCodes,
       ipv6: host.type == InternetAddressType.IPv6,
     );
   }

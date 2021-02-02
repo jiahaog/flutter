@@ -47,9 +47,6 @@ FlutterPlatform installHook({
   TestWatcher watcher,
   bool enableObservatory = false,
   bool machine = false,
-  bool startPaused = false,
-  bool disableServiceAuthCodes = false,
-  bool disableDds = false,
   int port = 0,
   String precompiledDillPath,
   Map<String, String> precompiledDillFiles,
@@ -61,14 +58,12 @@ FlutterPlatform installHook({
   FlutterProject flutterProject,
   String icudtlPath,
   PlatformPluginRegistration platformPluginRegistration,
-  bool nullAssertions = false,
-  @required BuildInfo buildInfo,
   List<String> additionalArguments,
   Device integrationTestDevice,
   DebuggingOptions debuggingOptions,
 }) {
   assert(testWrapper != null);
-  assert(enableObservatory || (!startPaused && observatoryPort == null));
+  assert(enableObservatory || (!debuggingOptions.startPaused && observatoryPort == null));
 
   // registerPlatformPlugin can be injected for testing since it's not very mock-friendly.
   platformPluginRegistration ??= (FlutterPlatform platform) {
@@ -84,9 +79,6 @@ FlutterPlatform installHook({
     watcher: watcher,
     machine: machine,
     enableObservatory: enableObservatory,
-    startPaused: startPaused,
-    disableServiceAuthCodes: disableServiceAuthCodes,
-    disableDds: disableDds,
     explicitObservatoryPort: observatoryPort,
     host: _kHosts[serverType],
     port: port,
@@ -97,8 +89,6 @@ FlutterPlatform installHook({
     projectRootDirectory: projectRootDirectory,
     flutterProject: flutterProject,
     icudtlPath: icudtlPath,
-    nullAssertions: nullAssertions,
-    buildInfo: buildInfo,
     additionalArguments: additionalArguments,
     integrationTestDevice: integrationTestDevice,
     debuggingOptions: debuggingOptions,
@@ -256,9 +246,6 @@ class FlutterPlatform extends PlatformPlugin {
     this.watcher,
     this.enableObservatory,
     this.machine,
-    this.startPaused,
-    this.disableServiceAuthCodes,
-    this.disableDds,
     this.explicitObservatoryPort,
     this.host,
     this.port,
@@ -269,9 +256,7 @@ class FlutterPlatform extends PlatformPlugin {
     this.projectRootDirectory,
     this.flutterProject,
     this.icudtlPath,
-    this.nullAssertions = false,
     this.additionalArguments,
-    @required this.buildInfo,
     this.integrationTestDevice,
     this.debuggingOptions,
   }) : assert(shellPath != null);
@@ -280,9 +265,6 @@ class FlutterPlatform extends PlatformPlugin {
   final TestWatcher watcher;
   final bool enableObservatory;
   final bool machine;
-  final bool startPaused;
-  final bool disableServiceAuthCodes;
-  final bool disableDds;
   final int explicitObservatoryPort;
   final InternetAddress host;
   final int port;
@@ -293,8 +275,6 @@ class FlutterPlatform extends PlatformPlugin {
   final Uri projectRootDirectory;
   final FlutterProject flutterProject;
   final String icudtlPath;
-  final bool nullAssertions;
-  final BuildInfo buildInfo;
   final List<String> additionalArguments;
   final Device integrationTestDevice;
   final DebuggingOptions debuggingOptions;
@@ -401,7 +381,6 @@ class FlutterPlatform extends PlatformPlugin {
     if (integrationTestDevice != null) {
       return IntegrationTestTestDevice(
         device: integrationTestDevice,
-        buildInfo: buildInfo,
         debuggingOptions: debuggingOptions,
       );
     }
@@ -409,19 +388,15 @@ class FlutterPlatform extends PlatformPlugin {
       shellPath: shellPath,
       enableObservatory: enableObservatory,
       machine: machine,
-      startPaused: startPaused,
-      disableServiceAuthCodes: disableServiceAuthCodes,
-      disableDds: disableDds,
       explicitObservatoryPort: explicitObservatoryPort,
       host: host,
       buildTestAssets: buildTestAssets,
       flutterProject: flutterProject,
       icudtlPath: icudtlPath,
-      nullAssertions: nullAssertions,
       additionalArguments: additionalArguments,
-      buildInfo: buildInfo,
       compileExpression: _compileExpressionService,
-      fontConfigManager: _fontConfigManager
+      fontConfigManager: _fontConfigManager,
+      debuggingOptions: debuggingOptions,
     );
   }
 
@@ -430,7 +405,7 @@ class FlutterPlatform extends PlatformPlugin {
     StreamChannel<dynamic> controller,
     int ourTestCount,
   ) async {
-    _packageConfig ??= buildInfo.packageConfig;
+    _packageConfig ??= debuggingOptions.buildInfo.packageConfig;
     globals.printTrace('test $ourTestCount: starting test $testPath');
 
     _AsyncError outOfBandError; // error that we couldn't send to the harness that we need to send via our future
@@ -486,7 +461,7 @@ class FlutterPlatform extends PlatformPlugin {
 
       if (integrationTestDevice == null && (precompiledDillPath == null && precompiledDillFiles == null)) {
         // Lazily instantiate compiler so it is built only if it is actually used.
-        compiler ??= TestCompiler(buildInfo, flutterProject);
+        compiler ??= TestCompiler(debuggingOptions.buildInfo, flutterProject);
         mainDart = await compiler.compile(globals.fs.file(mainDart).uri);
 
         if (mainDart == null) {
