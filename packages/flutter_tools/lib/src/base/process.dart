@@ -319,7 +319,11 @@ class _DefaultProcessUtils implements ProcessUtils {
         environment: _environment(allowReentrantFlutter, environment),
       );
       final RunResult runResult = RunResult(results, cmd);
-      _logger.printTrace(runResult.toString());
+      if (!cmd.contains('xcrun')) {
+        _logger.printTrace(runResult.toString());
+      } else {
+        _logger.printTrace('Skipping logging of runResult for cmd=$cmd');
+      }
       if (throwOnError && runResult.exitCode != 0 &&
           (allowedFailures == null || !allowedFailures(runResult.exitCode))) {
         runResult.throwException('Process exited abnormally:\n$runResult');

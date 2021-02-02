@@ -1241,6 +1241,61 @@ class AndroidDevicePortForwarder extends DevicePortForwarder {
     return ports;
   }
 
+  Future<int> reverse(int hostPort) async {
+    int devicePort = hostPort;
+    final RunResult process = await _processUtils.run(
+      <String>[
+        _adbPath,
+        '-s',
+        _deviceId,
+        'reverse',
+        'tcp:$devicePort',
+        'tcp:$hostPort',
+      ],
+      throwOnError: true,
+    );
+
+    if (process.stderr.isNotEmpty) {
+      process.throwException('adb returned error:\n${process.stderr}');
+    }
+
+    if (process.exitCode != 0) {
+      if (process.stdout.isNotEmpty) {
+        process.throwException('adb returned error:\n${process.stdout}');
+      }
+      process.throwException('adb failed without a message');
+    }
+
+    if (devicePort == 0) {
+      if (process.stdout.isEmpty) {
+        process.throwException('adb did not report reversed port');
+      }
+      devicePort = int.tryParse(process.stdout);
+      if (devicePort == null) {
+        process.throwException('adb returned invalid port number:\n${process.stdout}');
+      }
+    } else {
+      // stdout may be empty or the port we asked it to reverse, though it's
+      // not documented (or obvious) what triggers each case.
+      //
+      // Observations are:
+      //   - On MacOS it's always empty when Flutter spawns the process, but
+      //   - On MacOS it prints the port number when run from the terminal, unless
+      //     the port is already reversed, when it also prints nothing.
+      //   - On ChromeOS, the port appears to be printed even when Flutter spawns
+      //     the process
+      //
+      // To cover all cases, we accept the output being either empty or exactly
+      // the port number, but treat any other output as probably being an error
+      // message.
+      if (process.stdout.isNotEmpty && process.stdout.trim() != '$devicePort') {
+        process.throwException('adb returned error:\n${process.stdout}');
+      }
+    }
+    assert(devicePort == hostPort);
+    return devicePort;
+  }
+
   @override
   Future<int> forward(int devicePort, { int hostPort }) async {
     hostPort ??= 0;

@@ -115,6 +115,7 @@ class ApplicationPackageFactory {
             : FuchsiaApp.fromPrebuiltApp(applicationBinary);
     }
     assert(platform != null);
+    throw 'wtf';
     return null;
   }
 }

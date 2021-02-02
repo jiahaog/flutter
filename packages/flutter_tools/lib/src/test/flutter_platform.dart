@@ -17,6 +17,7 @@ import '../base/io.dart';
 import '../build_info.dart';
 import '../compile.dart';
 import '../convert.dart';
+import '../device.dart';
 import '../dart/language_version.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
@@ -63,6 +64,8 @@ FlutterPlatform installHook({
   bool nullAssertions = false,
   @required BuildInfo buildInfo,
   List<String> additionalArguments,
+  Device integrationTestDevice,
+  DebuggingOptions debuggingOptions,
 }) {
   assert(testWrapper != null);
   assert(enableObservatory || (!startPaused && observatoryPort == null));
@@ -97,6 +100,8 @@ FlutterPlatform installHook({
     nullAssertions: nullAssertions,
     buildInfo: buildInfo,
     additionalArguments: additionalArguments,
+    integrationTestDevice: integrationTestDevice,
+    debuggingOptions: debuggingOptions,
   );
   platformPluginRegistration(platform);
   return platform;
@@ -122,11 +127,13 @@ FlutterPlatform installHook({
 String generateTestBootstrap({
   @required Uri testUrl,
   @required InternetAddress host,
+  @required bool isIntegrationTest,
   File testConfigFile,
   bool updateGoldens = false,
   String languageVersionHeader = '',
   bool nullSafety = false,
   bool flutterTestDep = true,
+  int port,
 }) {
   assert(testUrl != null);
   assert(host != null);
@@ -148,6 +155,11 @@ import 'dart:isolate';
   if (flutterTestDep) {
     buffer.write('''
 import 'package:flutter_test/flutter_test.dart';
+''');
+  }
+  if (isIntegrationTest) {
+    buffer.write('''
+import 'package:integration_test/integration_test.dart';
 ''');
   }
   buffer.write('''
@@ -189,7 +201,20 @@ void catchIsolateErrors() {
 
 
 void main() {
-  String serverPort = Platform.environment['SERVER_PORT'] ?? '';
+''');
+  if (isIntegrationTest) {
+    buffer.write('''
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  final aaa = Platform.environment;
+  print('ENVIRONMENT IS ' + aaa.toString());
+  String serverPort = '$port';
+''');
+  } else {
+    buffer.write('''
+    String serverPort = Platform.environment['SERVER_PORT'] ?? '';
+    ''');
+  }
+  buffer.write('''
   String server = Uri.decodeComponent('$encodedWebsocketUrl:\$serverPort');
   StreamChannel<dynamic> channel = serializeSuite(() {
     catchIsolateErrors();
@@ -247,6 +272,8 @@ class FlutterPlatform extends PlatformPlugin {
     this.nullAssertions = false,
     this.additionalArguments,
     @required this.buildInfo,
+    this.integrationTestDevice,
+    this.debuggingOptions,
   }) : assert(shellPath != null);
 
   final String shellPath;
@@ -269,6 +296,8 @@ class FlutterPlatform extends PlatformPlugin {
   final bool nullAssertions;
   final BuildInfo buildInfo;
   final List<String> additionalArguments;
+  final Device integrationTestDevice;
+  final DebuggingOptions debuggingOptions;
 
   final FontConfigManager _fontConfigManager = FontConfigManager();
 
@@ -369,6 +398,13 @@ class FlutterPlatform extends PlatformPlugin {
   PackageConfig _packageConfig;
 
   TestDevice _createTestDevice() {
+    if (integrationTestDevice != null) {
+      return IntegrationTestTestDevice(
+        device: integrationTestDevice,
+        buildInfo: buildInfo,
+        debuggingOptions: debuggingOptions,
+      );
+    }
     return FlutterTesterTestDevice(
       shellPath: shellPath,
       enableObservatory: enableObservatory,
@@ -435,6 +471,8 @@ class FlutterPlatform extends PlatformPlugin {
 
       globals.printTrace('test $ourTestCount: starting shell process');
 
+      // TODO clean up this section.
+
       // If a kernel file is given, then use that to launch the test.
       // If mapping is provided, look kernel file from mapping.
       // If all fails, create a "listener" dart that invokes actual test.
@@ -446,7 +484,7 @@ class FlutterPlatform extends PlatformPlugin {
       }
       mainDart ??= _createListenerDart(finalizers, ourTestCount, testPath, server);
 
-      if (precompiledDillPath == null && precompiledDillFiles == null) {
+      if (integrationTestDevice == null && (precompiledDillPath == null && precompiledDillFiles == null)) {
         // Lazily instantiate compiler so it is built only if it is actually used.
         compiler ??= TestCompiler(buildInfo, flutterProject);
         mainDart = await compiler.compile(globals.fs.file(mainDart).uri);
@@ -564,12 +602,14 @@ class FlutterPlatform extends PlatformPlugin {
     listenerFile.createSync();
     listenerFile.writeAsStringSync(_generateTestMain(
       testUrl: globals.fs.path.toUri(globals.fs.path.absolute(testPath)),
+      serverPort: server.port,
     ));
     return listenerFile.path;
   }
 
   String _generateTestMain({
     Uri testUrl,
+    int serverPort,
   }) {
     assert(testUrl.scheme == 'file');
     final File file = globals.fs.file(testUrl);
@@ -581,9 +621,11 @@ class FlutterPlatform extends PlatformPlugin {
       testUrl: testUrl,
       testConfigFile: findTestConfigFile(globals.fs.file(testUrl)),
       host: host,
+      port: serverPort,
       updateGoldens: updateGoldens,
       flutterTestDep: _packageConfig['flutter_test'] != null,
-      languageVersionHeader: '// @dart=${languageVersion.major}.${languageVersion.minor}'
+      languageVersionHeader: '// @dart=${languageVersion.major}.${languageVersion.minor}',
+      isIntegrationTest: integrationTestDevice != null,
     );
   }
 

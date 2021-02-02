@@ -8,14 +8,17 @@ import 'dart:async';
 import 'dart:io' as io; // ignore: dart_io_import;
 
 import 'package:dds/dds.dart';
+import 'package:flutter_tools/src/android/android_device.dart';
 import 'package:meta/meta.dart';
 import 'package:vm_service/vm_service.dart' as vm_service;
 
+import '../application_package.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
 import '../base/io.dart';
 import '../build_info.dart';
 import '../convert.dart';
+import '../device.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
 import '../vmservice.dart';
@@ -50,6 +53,94 @@ class TestDeviceException implements Exception {
 
   @override
   String toString() => 'TestDeviceException($message)';
+}
+
+class IntegrationTestTestDevice implements TestDevice {
+  IntegrationTestTestDevice({
+    @required this.device,
+    @required this.buildInfo,
+    @required this.debuggingOptions,
+  });
+
+  final Device device;
+  final BuildInfo buildInfo;
+  final DebuggingOptions debuggingOptions;
+
+  ApplicationPackage _applicationPackage;
+  final Completer<void> _finished = Completer<void>();
+  Uri _observatoryUri;
+
+  @override
+  Future<void> start({@required String compiledEntrypointPath, @required int serverPort}) async {
+    final TargetPlatform targetPlatform = await device.targetPlatform;
+    _applicationPackage = await ApplicationPackageFactory.instance.getPackageForPlatform(
+      targetPlatform,
+      buildInfo: buildInfo,
+    );
+
+    // Hack.
+    // - Reverse API is missing from the forwarder.
+    // - The port on the device here is forced to match what is used on the host.
+    //   If there is something already listening on that port on the device,
+    //   this will fail.
+    // - If we want to let this API tell us what the port should be, we cannot
+    //   bundle this port as part of codegen.
+    if (targetPlatform == TargetPlatform.android ||
+        targetPlatform == TargetPlatform.android_arm ||
+        targetPlatform == TargetPlatform.android_arm64 ||
+        targetPlatform == TargetPlatform.android_x64 ||
+        targetPlatform == TargetPlatform.android_x86) {
+      await(device.portForwarder as AndroidDevicePortForwarder).reverse(serverPort);
+    }
+
+    final LaunchResult launchResult = await device.startApp(
+      _applicationPackage,
+      mainPath: compiledEntrypointPath,
+      platformArgs: <String, Object>{
+        'SERVER_PORT': serverPort,
+      },
+      // route: route,
+      debuggingOptions: debuggingOptions,
+      // applicationBinary: applicationBinary,
+      //   userIdentifier: userIdentifier,
+      //   prebuiltApplication: prebuiltApplication,
+    );
+
+
+    assert(launchResult.started);
+
+    _observatoryUri = launchResult.observatoryUri;
+
+    // TODO: Connect the logs as part of the interface.
+
+    // final DeviceLogReader logReader = await device.getLogReader(app: applicationPackage);
+    // // logReader.logLines.listen(_logger.printStatus);
+
+    // final vm_service.VM vm = await _vmService.getVM();
+    // logReader.appPid = vm.pid;
+  }
+
+  @override
+  Future<Uri> get observatoryUri async => _observatoryUri;
+
+  // TODO: Figure this out.
+  String userIdentifier;
+
+  @override
+  Future<void> kill() async {
+    if (!await device.stopApp(_applicationPackage, userIdentifier: userIdentifier)) {
+        globals.printError('Failed to stop app');
+    }
+    if (!await device.uninstallApp(_applicationPackage, userIdentifier: userIdentifier)) {
+      globals.printError('Failed to uninstall app');
+    }
+
+    await device.dispose();
+    _finished.complete();
+  }
+
+  @override
+  Future<void> get finished => _finished.future;
 }
 
 /// Implementation of [TestDevice] with the Flutter Tester over a [Process].

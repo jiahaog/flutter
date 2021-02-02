@@ -268,6 +268,10 @@ class AnsiTerminal implements Terminal {
 
   @override
   Stream<String> get keystrokes {
+    // An error will be thrown after a test if the device selector was triggered
+    // during the test.
+    // stdin here conflicts with https://github.com/dart-lang/test/blob/3b41d99c9500e5239a0fb1388f7ad3b16925f2e5/pkgs/test_core/lib/src/util/io.dart#L58
+    // Chainging this to a broadcast stream doesn't fix the issue.
     _broadcastStdInString ??= _stdio.stdin.transform<String>(const AsciiDecoder(allowInvalid: true)).asBroadcastStream();
     return _broadcastStdInString;
   }

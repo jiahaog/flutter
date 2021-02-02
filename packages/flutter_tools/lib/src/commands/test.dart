@@ -13,6 +13,7 @@ import '../build_info.dart';
 import '../bundle.dart';
 import '../cache.dart';
 import '../devfs.dart';
+import '../device.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
 import '../runner/flutter_command.dart';
@@ -35,6 +36,8 @@ class TestCommand extends FlutterCommand {
     addEnableExperimentation(hide: !verboseHelp);
     usesDartDefineOption();
     usesWebRendererOption();
+    addPublishPort(enabledByDefault: true, verboseHelp: verboseHelp);
+
     argParser
       ..addMultiOption('name',
         help: 'A regular expression matching substrings of the names of tests to run.',
@@ -245,6 +248,19 @@ class TestCommand extends FlutterCommand {
       ];
     }
 
+
+    bool isIntegrationTest = false;
+    final String currentDirectory = globals.fs.currentDirectory.absolute.path;
+    if (files.every((String file) => file.startsWith('$currentDirectory/integration_test/'))) {
+      isIntegrationTest = true;
+    } else if (!files.every((String file) => file.startsWith('$currentDirectory/test/'))) {
+      throwToolExit(
+        'Integration tests and unit tests cannot be run in a single invocation'
+        '. Use separate invocations of `flutter test` to run integration tests '
+        'and unit tests.'
+      );
+    }
+
     final bool machine = boolArg('machine');
     CoverageCollector collector;
     if (boolArg('coverage') || boolArg('merge-coverage')) {
@@ -266,6 +282,55 @@ class TestCommand extends FlutterCommand {
     }
 
     final bool disableServiceAuthCodes = boolArg('disable-service-auth-codes');
+
+    Device integrationTestDevice;
+    DebuggingOptions debuggingOptions;
+
+    if (isIntegrationTest) {
+      integrationTestDevice = await findTargetDevice();
+      // TODO maybe other args can be combined into debugging options?
+      debuggingOptions = DebuggingOptions.enabled(
+          buildInfo,
+          startPaused: boolArg('start-paused'),
+          disableServiceAuthCodes: boolArg('disable-service-auth-codes'),
+          disableDds: boolArg('disable-dds'),
+          // dartEntrypointArgs: stringsArg('dart-entrypoint-args'),
+          // dartFlags: stringArg('dart-flags') ?? '',
+          // useTestFonts: argParser.options.containsKey('use-test-fonts') && boolArg('use-test-fonts'),
+          // enableSoftwareRendering: argParser.options.containsKey('enable-software-rendering') && boolArg('enable-software-rendering'),
+          // skiaDeterministicRendering: argParser.options.containsKey('skia-deterministic-rendering') && boolArg('skia-deterministic-rendering'),
+          // traceSkia: boolArg('trace-skia'),
+          // traceAllowlist: traceAllowlist,
+          // traceSystrace: boolArg('trace-systrace'),
+          // endlessTraceBuffer: boolArg('endless-trace-buffer'),
+          // dumpSkpOnShaderCompilation: dumpSkpOnShaderCompilation,
+          // cacheSkSL: cacheSkSL,
+          // purgePersistentCache: purgePersistentCache,
+          deviceVmServicePort: deviceVmservicePort,
+          hostVmServicePort: hostVmservicePort,
+          disablePortPublication: disablePortPublication,
+          // ddsPort: ddsPort,
+          // devToolsServerAddress: devToolsServerAddress,
+          // verboseSystemLogs: boolArg('verbose-system-logs'),
+          // hostname: featureFlags.isWebEnabled ? stringArg('web-hostname') : '',
+          // port: featureFlags.isWebEnabled ? stringArg('web-port') : '',
+          // webUseSseForDebugProxy: featureFlags.isWebEnabled && stringArg('web-server-debug-protocol') == 'sse',
+          // webUseSseForDebugBackend: featureFlags.isWebEnabled && stringArg('web-server-debug-backend-protocol') == 'sse',
+          // webEnableExposeUrl: featureFlags.isWebEnabled && boolArg('web-allow-expose-url'),
+          // webRunHeadless: featureFlags.isWebEnabled && boolArg('web-run-headless'),
+          // webBrowserDebugPort: browserDebugPort,
+          // webEnableExpressionEvaluation: featureFlags.isWebEnabled && boolArg('web-enable-expression-evaluation'),
+          // vmserviceOutFile: stringArg('vmservice-out-file'),
+          // fastStart: argParser.options.containsKey('fast-start')
+          //   && boolArg('fast-start')
+            // && !runningWithPrebuiltApplication,
+          nullAssertions: boolArg('null-assertions'),
+          // nativeNullAssertions: boolArg('native-null-assertions'),
+        );
+      // await createDebuggingOptions();
+    }
+
+
 
     final int result = await testRunner.runTests(
       testWrapper,
@@ -291,6 +356,8 @@ class TestCommand extends FlutterCommand {
       nullAssertions: boolArg(FlutterOptions.kNullAssertions),
       reporter: stringArg('reporter'),
       timeout: stringArg('timeout'),
+      integrationTestDevice: integrationTestDevice,
+      debuggingOptions: debuggingOptions,
     );
 
     if (collector != null) {

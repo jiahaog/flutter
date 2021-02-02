@@ -1183,6 +1183,7 @@ class AutomatedTestWidgetsFlutterBinding extends TestWidgetsFlutterBinding {
     _currentFakeAsync = fakeAsync; // reset in postTest
     _clock = fakeAsync.getClock(DateTime.utc(2015, 1, 1));
     late Future<void> testBodyResult;
+    print('RUNNING WITH FAKEASYNC');
     fakeAsync.run((FakeAsync localFakeAsync) {
       assert(fakeAsync == _currentFakeAsync);
       assert(fakeAsync == localFakeAsync);
@@ -1615,6 +1616,7 @@ class LiveTestWidgetsFlutterBinding extends TestWidgetsFlutterBinding {
     assert(description != null);
     assert(!inTest);
     _inTest = true;
+    print('RUNNING WITHOUT FAKEASYNC');
     renderView._setDescription(description);
     // We drop the timeout on the floor in `flutter run` mode.
     // We could support it, but we'd have to automatically add the entire duration of pumps

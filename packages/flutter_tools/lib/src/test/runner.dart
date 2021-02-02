@@ -11,6 +11,7 @@ import '../base/common.dart';
 import '../base/file_system.dart';
 import '../base/io.dart';
 import '../build_info.dart';
+import '../device.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
 import '../web/chrome.dart';
@@ -55,6 +56,8 @@ abstract class FlutterTestRunner {
     String reporter,
     String timeout,
     List<String> additionalArguments,
+    Device integrationTestDevice,
+    DebuggingOptions debuggingOptions,
   });
 }
 
@@ -91,6 +94,8 @@ class _FlutterTestRunnerImpl implements FlutterTestRunner {
     String reporter,
     String timeout,
     List<String> additionalArguments,
+    Device integrationTestDevice,
+    DebuggingOptions debuggingOptions,
   }) async {
     // Configure package:test to use the Flutter engine for child processes.
     final String shellPath = globals.artifacts.getArtifactPath(Artifact.flutterTester);
@@ -177,6 +182,11 @@ class _FlutterTestRunnerImpl implements FlutterTestRunner {
       return exitCode;
     }
 
+    if (integrationTestDevice != null) {
+      // Running on a real device doesn't work well with concurency.
+      testArgs.add('--concurrency=1');
+    }
+
     testArgs
       ..add('--')
       ..addAll(testFiles);
@@ -204,6 +214,8 @@ class _FlutterTestRunnerImpl implements FlutterTestRunner {
       nullAssertions: nullAssertions,
       buildInfo: buildInfo,
       additionalArguments: additionalArguments,
+      integrationTestDevice: integrationTestDevice,
+      debuggingOptions: debuggingOptions,
     );
 
     try {
