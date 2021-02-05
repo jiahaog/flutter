@@ -171,6 +171,11 @@ StreamChannel<dynamic> serializeSuite(Function getMain()) {
   return RemoteListener.start(getMain);
 }
 
+Future<void> _testMain() async {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  return test.main();
+}
+
 /// Capture any top-level errors (mostly lazy syntax errors, since other are
 /// caught below) and report them to the parent isolate.
 void catchIsolateErrors() {
@@ -194,9 +199,6 @@ void main() {
 ''');
   if (isIntegrationTest) {
     buffer.write('''
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-  final aaa = Platform.environment;
-  print('ENVIRONMENT IS ' + aaa.toString());
   String serverPort = '$port';
 ''');
   } else {
@@ -217,11 +219,11 @@ autoUpdateGoldenFiles = $updateGoldens;
   }
   if (testConfigFile != null) {
     buffer.write('''
-    return () => test_config.testExecutable(test.main);
+    return () => test_config.testExecutable(_testMain);
 ''');
   } else {
     buffer.write('''
-    return test.main;
+    return _testMain;
 ''');
   }
   buffer.write('''

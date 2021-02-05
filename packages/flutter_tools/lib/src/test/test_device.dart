@@ -112,7 +112,7 @@ class IntegrationTestTestDevice implements TestDevice {
       _applicationPackage,
       mainPath: entrypointPath,
       platformArgs: <String, Object>{
-        'SERVER_PORT': serverPort,
+        'uri': 'helloweb',
       },
       // route: route,
       debuggingOptions: debuggingOptions,
@@ -303,6 +303,7 @@ class FlutterTesterTestDevice extends TestDevice {
           globals.printTrace('Connecting to service protocol: $forwardingUri');
           final Future<vm_service.VmService> localVmService = connectToVmService(
             forwardingUri,
+            // TODO this is needed for integration test debugging.
             compileExpression: compileExpression,
           );
           unawaited(localVmService.then((vm_service.VmService vmservice) {
