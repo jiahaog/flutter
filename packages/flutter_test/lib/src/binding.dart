@@ -827,7 +827,10 @@ abstract class TestWidgetsFlutterBinding extends BindingBase
     // So that we can assert that it remains the same after the test finishes.
     _beforeTestCheckIntrinsicSizes = debugCheckIntrinsicSizes;
 
-    runApp(Container(key: UniqueKey(), child: _preTestMessage)); // Reset the tree to a known state.
+    await runZoned(() async {
+      runApp(Container(key: UniqueKey(), child: _preTestMessage)); // Reset the tree to a known state.
+    }, zoneValues: {hackZoneKey: 'foo'});
+
     await pump();
     // Pretend that the first frame produced in the test body is the first frame
     // sent to the engine.
@@ -965,6 +968,8 @@ abstract class TestWidgetsFlutterBinding extends BindingBase
     RendererBinding.instance.initMouseTracker();
   }
 }
+
+Object hackZoneKey = Object();
 
 /// A variant of [TestWidgetsFlutterBinding] for executing tests in
 /// the `flutter test` environment.
